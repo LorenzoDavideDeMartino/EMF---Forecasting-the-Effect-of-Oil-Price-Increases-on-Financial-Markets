@@ -72,45 +72,37 @@ def show_missing_report(df, label):
 
 
 def aggregate_daily_to_monthly(daily_df):
-    monthly_last = (
-        daily_df.set_index("date")
-        .resample("M")  # on passe de la frequence journaliere a la frequence mensuelle
-        .last()  # on garde la derniere observation du mois, ce qui est naturel pour des prix de marche
+    monthly_data = daily_df.resample("M", on="date").last().reset_index()  # on garde la derniere observation de chaque mois pour toutes les series de marche
+
+    sp500_daily_returns = daily_df[["date", "sp500"]].copy()  # on isole le S&P 500 car il sert au calcul de la volatilite realisee
+    sp500_daily_returns["sp500_daily_log_return"] = np.log(sp500_daily_returns["sp500"]).diff()  # on calcule les rendements journaliers en log
+
+    monthly_volatility = (
+        sp500_daily_returns.resample("M", on="date")["sp500_daily_log_return"]
+        .std()  # l'ecart-type des rendements journaliers dans le mois sert de mesure simple de volatilite realisee
+        .rename("sp500_realized_vol")
         .reset_index()
-        .rename(columns={"date": "month_end"})
     )
 
-    daily_returns = daily_df[["date", "sp500"]].copy()  # on garde seulement ce qui sert a calculer la volatilite mensuelle du S&P 500
-    daily_returns["sp500_daily_log_return"] = np.log(daily_returns["sp500"]).diff()  # on calcule d'abord les rendements journaliers en log
-    daily_returns["month_end"] = daily_returns["date"].dt.to_period("M").dt.to_timestamp("M")  # on rattache chaque rendement journalier a son mois
-
-    realized_vol = (
-        daily_returns.groupby("month_end")["sp500_daily_log_return"]
-        .std()  # l'ecart-type intra-mensuel sert ici de mesure simple de volatilite realisee
-        .reset_index()
-        .rename(columns={"sp500_daily_log_return": "sp500_realized_vol"})
-    )
-
-    monthly_last = monthly_last.merge(realized_vol, on="month_end", how="left")  # on ajoute ce controle de volatilite au panel mensuel
-    monthly_last = monthly_last.rename(columns={"month_end": "date"})  # on garde un seul nom de colonne pour les dates
-    return monthly_last
+    monthly_data = monthly_data.merge(monthly_volatility, on="date", how="left")  # on ajoute la volatilite mensuelle au jeu de donnees mensuel
+    return monthly_data
 
 
 def prepare_monthly_dataset(excel_path=DEFAULT_DATA_PATH):
-    daily = load_data_sheet(excel_path, "Daily", DAILY_COLUMNS)  # on charge les variables de marche journalieres
-    monthly_macro = load_data_sheet(excel_path, "Monthly", MONTHLY_COLUMNS)  # on charge le bloc macro mensuel
+    daily = load_data_sheet(excel_path, "Daily", DAILY_COLUMNS)  # on charge les series journalieres de marche
+    monthly_macro = load_data_sheet(excel_path, "Monthly", MONTHLY_COLUMNS)  # on charge les series macro mensuelles
 
     print("Daily raw shape:", daily.shape)
     print("Monthly macro raw shape:", monthly_macro.shape)
 
-    daily_monthly = aggregate_daily_to_monthly(daily)  # on met les series journalieres a la meme frequence mensuelle que l'analyse
-    print("Aggregated daily-to-monthly shape:", daily_monthly.shape)
+    monthly_market_data = aggregate_daily_to_monthly(daily)  # on transforme les donnees de marche journalieres en donnees mensuelles
+    print("Aggregated daily-to-monthly shape:", monthly_market_data.shape)
 
-    show_missing_report(daily_monthly, "Aggregated daily data before merge")
+    show_missing_report(monthly_market_data, "Aggregated daily data before merge")
     show_missing_report(monthly_macro, "Monthly macro data before merge")
 
-    merged = daily_monthly.merge(monthly_macro, on="date", how="inner")  # on garde seulement les mois presents dans les deux sources
-    merged = merged.sort_values("date").reset_index(drop=True)  # on retrie apres la fusion pour eviter des erreurs d'alignement plus tard
+    merged = monthly_market_data.merge(monthly_macro, on="date", how="inner")  # on garde seulement les mois communs aux donnees de marche et macro
+    merged = merged.sort_values("date").reset_index(drop=True)  # on garde un ordre chronologique propre pour les etapes suivantes
 
     print("Merged monthly dataset shape:", merged.shape)
     show_missing_report(merged, "Merged monthly data before variable construction")
