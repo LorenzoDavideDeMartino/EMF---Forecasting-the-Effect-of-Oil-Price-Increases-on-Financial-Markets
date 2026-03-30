@@ -1,10 +1,8 @@
 from pathlib import Path
 
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import statsmodels.api as sm
-from scipy import stats
 from statsmodels.tsa.api import VAR
 from statsmodels.tsa.stattools import adfuller, grangercausalitytests
 
@@ -57,20 +55,6 @@ def load_data_sheet(excel_path, sheet_name, columns):
 
     data = data.sort_values("date").reset_index(drop=True)  # on garde un echantillon proprement ordonne dans le temps
     return data
-
-
-def show_missing_report(df, label):
-    report = pd.DataFrame(
-        {
-            "missing_count": df.isna().sum(),
-            "missing_share": df.isna().mean().round(4),
-        }
-    )
-    print(f"\nMissing values report: {label}")
-    print(report.to_string())  # on montre a la fois le nombre et la part des valeurs manquantes
-    return report
-
-
 def aggregate_daily_to_monthly(daily_df):
     monthly_data = daily_df.resample("M", on="date").last().reset_index()  # on garde la derniere observation de chaque mois pour toutes les series de marche
 
@@ -98,14 +82,10 @@ def prepare_monthly_dataset(excel_path=DEFAULT_DATA_PATH):
     monthly_market_data = aggregate_daily_to_monthly(daily)  # on transforme les donnees de marche journalieres en donnees mensuelles
     print("Aggregated daily-to-monthly shape:", monthly_market_data.shape)
 
-    show_missing_report(monthly_market_data, "Aggregated daily data before merge")
-    show_missing_report(monthly_macro, "Monthly macro data before merge")
-
     merged = monthly_market_data.merge(monthly_macro, on="date", how="inner")  # on garde seulement les mois communs aux donnees de marche et macro
     merged = merged.sort_values("date").reset_index(drop=True)  # on garde un ordre chronologique propre pour les etapes suivantes
 
     print("Merged monthly dataset shape:", merged.shape)
-    show_missing_report(merged, "Merged monthly data before variable construction")
     return daily, monthly_macro, merged
 
 
@@ -156,17 +136,7 @@ def build_project_variables(monthly_df):
     for column in expected_columns:
         print(f"{column}: {'OK' if column in df.columns else 'MISSING'}")
 
-    show_missing_report(df[["date"] + expected_columns], "Main variables after construction")
     return df
-
-
-def make_summary_statistics(df, columns):
-    summary = df[columns].describe().T  # on commence par les statistiques descriptives classiques
-    summary["skew"] = df[columns].skew()  # on ajoute l'asymetrie pour voir si la distribution est desequilibree
-    summary["kurtosis"] = df[columns].kurtosis()  # on ajoute la kurtose pour reperer des queues epaisses
-    return summary[
-        ["count", "mean", "std", "min", "25%", "50%", "75%", "max", "skew", "kurtosis"]
-    ].round(4)
 
 
 def run_adf_table(df, columns):
@@ -359,18 +329,3 @@ def split_sample(df, split_date):
     early = df[df["date"] < split_date].copy()  # premiere sous-periode
     late = df[df["date"] >= split_date].copy()  # seconde sous-periode
     return early, late
-
-
-def normality_check(series):
-    series = series.dropna()  # ici la normalite est seulement descriptive, donc on garde les observations disponibles
-    if len(series) < 8:
-        return {"statistic": np.nan, "p_value": np.nan}
-
-    statistic, p_value = stats.jarque_bera(series)  # Jarque-Bera donne un indicateur simple de non-normalite
-    return {"statistic": round(statistic, 4), "p_value": round(p_value, 4)}
-
-
-def plot_time_series(df, columns, title, figsize=(12, 8)):
-    ax = df.set_index("date")[columns].plot(subplots=True, figsize=figsize, sharex=True, title=title)  # helper de trace simple et reutilisable
-    plt.tight_layout()
-    return ax
