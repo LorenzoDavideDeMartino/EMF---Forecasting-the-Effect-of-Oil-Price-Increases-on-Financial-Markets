@@ -15,13 +15,8 @@ DAILY_COLUMNS = [
     "date",
     "wti",
     "brent",
-    "bcom_energy",
-    "tft",
-    "natgas",
     "sp500",
-    "msci_world",
     "msci_em",
-    "russell2000",
     "us10y",
     "us2y",
     "hy_ytw",
@@ -29,18 +24,22 @@ DAILY_COLUMNS = [
 
 MONTHLY_COLUMNS = [
     "date",
-    "ip",
     "cfnai",
-    "ism_mfg",
-    "ism_prices",
-    "ism_services",
-    "ism_services_prices",
-    "retail_sales",
-    "richmond_fed"]
+    "ism_mfg"]
+
+SHEET_USECOLS = {
+    "Daily": [0, 1, 2, 6, 8, 10, 11, 12, 13],
+    "Monthly": [0, 2, 3],
+}
 
 
 def load_data_sheet(excel_path, sheet_name, columns):
-    raw = pd.read_excel(excel_path, sheet_name=sheet_name, header=None)  # on lit la feuille telle quelle car Bloomberg exporte plusieurs lignes d'en-tete
+    raw = pd.read_excel(
+        excel_path,
+        sheet_name=sheet_name,
+        header=None,
+        usecols=SHEET_USECOLS[sheet_name],
+    )  # on charge seulement les colonnes utiles au projet
     data = raw.iloc[5:].copy()  # on garde seulement la partie ou la vraie table commence
     data.columns = columns  # on remplace les libelles Bloomberg par des noms courts utiles pour le projet
 
@@ -93,10 +92,6 @@ def add_log_return(df, price_column, new_column):
     df[new_column] = np.log(df[price_column] / df[price_column].shift(1))  # on utilise les rendements log car ils sont standards en finance empirique
 
 
-def add_growth_rate(df, level_column, new_column):
-    df[new_column] = np.log(df[level_column] / df[level_column].shift(1))  # on utilise la croissance en log pour les niveaux macroeconomiques
-
-
 def build_project_variables(monthly_df):
     df = monthly_df.copy()
     df = df.sort_values("date").reset_index(drop=True)  # on garde un ordre mensuel propre avant de creer rendements et retards
@@ -105,16 +100,10 @@ def build_project_variables(monthly_df):
     add_log_return(df, "brent", "brent_return")  # proxy alternatif du petrole pour la robustesse
     add_log_return(df, "sp500", "sp500_return")  # rendement actions principal
     add_log_return(df, "msci_em", "msci_em_return")  # marche actions de robustesse
-    add_log_return(df, "msci_world", "msci_world_return")  # marche actions de robustesse
-    add_log_return(df, "russell2000", "russell2000_return")  # marche actions de robustesse plus expose aux petites capitalisations
     add_log_return(df, "gold", "gold_return")  # controle classique de valeur refuge
 
     df["term_spread"] = df["us10y"] - df["us2y"]  # on garde la pente de la courbe des taux en difference de niveau
     df["hy_change"] = df["hy_ytw"].diff()  # on prend la variation mensuelle pour mesurer le resserrement ou l'assouplissement du credit
-    df["us10y_change"] = df["us10y"].diff()  # variation du 10 ans utile surtout pour la partie descriptive
-
-    add_growth_rate(df, "ip", "ip_growth")  # on transforme la production industrielle en croissance mensuelle
-    add_growth_rate(df, "retail_sales", "retail_sales_growth")  # meme logique pour les ventes au detail
 
     print("\nCheck of expected columns after variable construction:")
     expected_columns = [
@@ -122,16 +111,12 @@ def build_project_variables(monthly_df):
         "brent_return",
         "sp500_return",
         "msci_em_return",
-        "msci_world_return",
-        "russell2000_return",
         "gold_return",
         "term_spread",
         "hy_change",
         "sp500_realized_vol",
         "cfnai",
         "ism_mfg",
-        "ip_growth",
-        "retail_sales_growth",
     ]
     for column in expected_columns:
         print(f"{column}: {'OK' if column in df.columns else 'MISSING'}")
