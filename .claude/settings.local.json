@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c \":*)",
+      "Bash(python -m venv .venv)",
+      "Bash(source .venv/Scripts/activate)",
+      "Bash(pip install:*)",
+      "Bash(python -c \"import pdfplumber; print\\(''ok''\\)\")",
+      "mcp__ide__getDiagnostics",
+      "Bash(python3:*)",
+      "Bash(python .tmp/generate_ideas_pdf.py)"
+    ]
+  }
+}
