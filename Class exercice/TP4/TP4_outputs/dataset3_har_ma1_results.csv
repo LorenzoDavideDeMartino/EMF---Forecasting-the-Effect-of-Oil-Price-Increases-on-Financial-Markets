@@ -1,0 +1,7 @@
+Parameter,Estimate,Std. err.,t-stat,p-value
+Intercept,9.473e-06,5.745e-06,1.6489,0.0992
+Lag 1 RV,0.2787,0.0272,10.2599,0.000e+00
+Lag 5 average RV,0.4610,0.0198,23.2917,0.000e+00
+Lag 20 average RV,0.1735,0.0102,16.9402,0.000e+00
+MA(1) coefficient,-3.223e-15,0.0241,-1.335e-13,1.0000
+Innovation sd,1.557e-04,2.587e-07,601.7757,0.000e+00

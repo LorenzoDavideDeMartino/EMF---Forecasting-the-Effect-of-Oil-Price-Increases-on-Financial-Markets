@@ -1,0 +1,14 @@
+,coef,std_err,t_stat,p_value
+const,-0.2405,0.2027,-1.1864,0.2355
+L1.Inflation,-0.0229,0.0188,-1.2187,0.223
+L1.Fed Rates,1.5461,0.0533,28.9819,0.0
+L1.Capacity Utilization Rate,0.0141,0.0096,1.4747,0.1403
+L2.Inflation,0.0493,0.0325,1.5184,0.1289
+L2.Fed Rates,-0.5358,0.0972,-5.5137,0.0
+L2.Capacity Utilization Rate,-0.0231,0.0141,-1.6417,0.1007
+L3.Inflation,-0.0682,0.0324,-2.1043,0.0354
+L3.Fed Rates,0.1035,0.0996,1.039,0.2988
+L3.Capacity Utilization Rate,0.0247,0.0137,1.8002,0.0718
+L4.Inflation,0.0501,0.0188,2.6641,0.0077
+L4.Fed Rates,-0.1265,0.0544,-2.3281,0.0199
+L4.Capacity Utilization Rate,-0.0125,0.0093,-1.3467,0.1781

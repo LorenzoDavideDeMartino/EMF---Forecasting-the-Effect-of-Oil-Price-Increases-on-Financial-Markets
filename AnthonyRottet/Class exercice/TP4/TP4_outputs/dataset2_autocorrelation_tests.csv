@@ -1,0 +1,4 @@
+Lag,Ljung-Box stat,Ljung-Box p-value,Box-Pierce stat,Box-Pierce p-value
+5,11.1058,0.0493,11.0089,0.0512
+10,12.7772,0.2364,12.6468,0.2441
+20,18.6559,0.5443,18.3062,0.5672
