@@ -1,0 +1,156 @@
+% EMIF 2026 - Group Project Report
+% HEC Lausanne / UNIL
+\documentclass[11pt,a4paper]{article}
+
+% Packages
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[english]{babel}
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{graphicx}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage{hyperref}
+\usepackage[margin=1in]{geometry}
+\usepackage{fancyhdr}
+\usepackage{float}
+\usepackage{caption}
+\usepackage{subcaption}
+\usepackage[style=numeric, sorting=none]{biblatex}
+\addbibresource{references.bib}
+
+% Code listing settings
+\definecolor{codegreen}{rgb}{0,0.6,0}
+\definecolor{codegray}{rgb}{0.5,0.5,0.5}
+\definecolor{codepurple}{rgb}{0.58,0,0.82}
+\definecolor{backcolour}{rgb}{0.95,0.95,0.92}
+
+\lstdefinestyle{pythonstyle}{
+    backgroundcolor=\color{backcolour},
+    commentstyle=\color{codegreen},
+    keywordstyle=\color{magenta},
+    numberstyle=\tiny\color{codegray},
+    stringstyle=\color{codepurple},
+    basicstyle=\ttfamily\footnotesize,
+    breakatwhitespace=false,
+    breaklines=true,
+    captionpos=b,
+    keepspaces=true,
+    numbers=left,
+    numbersep=5pt,
+    showspaces=false,
+    showstringspaces=false,
+    showtabs=false,
+    tabsize=2,
+    language=Python
+}
+
+\lstset{style=pythonstyle}
+
+% Header and footer
+\pagestyle{fancy}
+\fancyhf{}
+\rhead{EMIF Spring 2026}
+\lhead{Group Project Report}
+\rfoot{Page \thepage}
+
+% Title page information
+\title{%
+    \Large \textbf{Empirical Methods in Finance — Spring 2026} \\[0.3cm]
+    \vspace{0.5cm}
+    \LARGE \textbf{Forecasting the Effect of Oil Price Increases on Financial Markets: Supply-Side vs. Demand-Side Shocks} \\[0.3cm]
+    \vspace{0.3cm}
+    \large Group Project Report
+}
+\author{
+    Anthony Rottet \\[0.3cm]
+    \texttt{anthony.rottet@unil.ch} \\[0.3cm]
+    Student ID: 21410337
+}
+\date{April 5, 2026}
+
+\begin{document}
+
+\maketitle
+\thispagestyle{empty}
+
+\begin{abstract}
+\noindent
+
+\end{abstract}
+
+\newpage
+\tableofcontents
+\newpage
+
+% ================== MAIN CONTENT ==================
+
+\section{Introduction}
+\label{sec:introduction}
+
+
+\section{Economic Intuition}
+\label{sec:intuition}
+
+
+\section{Literature Review}
+\label{sec:literature}
+
+
+\section{Data}
+\label{sec:data}
+
+\subsection{Description and Variable Selection}
+
+\subsection{Transformations and Stationarity}
+
+\subsection{Descriptive Statistics}
+
+
+\section{Empirical Strategy}
+\label{sec:methodology}
+
+\subsection{Oil Shock Decomposition}
+
+\subsection{Predictive Regressions and Granger Causality}
+
+\subsection{VAR, Impulse Response Functions and Variance Decomposition}
+
+
+\section{Results}
+\label{sec:results}
+
+\subsection{Main Findings}
+
+\subsection{Robustness Checks}
+
+
+\section{Discussion and Limitations}
+\label{sec:discussion}
+
+
+\section{Conclusion}
+\label{sec:conclusion}
+
+
+% ================== REFERENCES ==================
+\newpage
+\section*{References}
+\addcontentsline{toc}{section}{References}
+
+\printbibliography[heading=none]
+
+
+% ================== APPENDICES ==================
+\newpage
+\appendix
+
+\section{Additional Figures and Tables}
+\label{app:figures}
+
+
+\section{Code Repository}
+\label{app:code}
+
+
+\end{document}
