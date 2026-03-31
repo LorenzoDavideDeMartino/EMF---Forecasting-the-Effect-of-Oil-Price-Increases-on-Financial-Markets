@@ -3,6 +3,9 @@ credentials.json
 token.json
 .venv/
 __pycache__/
+__pycache__/
+.ipynb_checkpoints/
+.jupyter_runtime/
 *.pyc
 .tmp/
 .idea/

@@ -8,7 +8,12 @@
       "Bash(python -c \"import pdfplumber; print\\(''ok''\\)\")",
       "mcp__ide__getDiagnostics",
       "Bash(python3:*)",
-      "Bash(python .tmp/generate_ideas_pdf.py)"
+      "Bash(python .tmp/generate_ideas_pdf.py)",
+      "Bash(git pull:*)",
+      "Bash(git ls-remote:*)",
+      "Bash(git config:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)"
     ]
   }
 }
