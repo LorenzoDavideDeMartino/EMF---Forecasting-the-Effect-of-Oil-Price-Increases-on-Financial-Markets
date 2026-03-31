@@ -1,447 +1,460 @@
 # Guide du notebook `emi_oil_market_ARv1.ipynb`
 
-## Question de recherche
+## Le projet en bref
 
-Est-ce que les hausses du prix du petrole ont des effets differents sur les marches financiers selon qu'elles sont liees a la **demande** (activite economique) ou a un facteur **residuel** (offre, geopolitique, speculation) ?
+Ce notebook est le livrable principal du projet de groupe EMIF (Econometrie des Marches et Instruments Financiers). La question du projet est :
 
-L'idee centrale : si le petrole monte parce que l'economie va bien (demande), l'effet sur les actions est different de quand le petrole monte a cause d'un choc d'offre (guerre, OPEP, etc.).
+> **Comment peut-on prevoir l'effet d'une hausse du prix du petrole sur les marches financiers ?**
+
+Le projet combine les **Proposals 1 et 2** du brief :
+- **Proposal 1** (VAR + Granger + IRF) : modelisation multivariee, causalite, reponses impulsionnelles (Classes 5-6)
+- **Proposal 2** (Asymetrie + Regressions predictives) : decomposition offre/demande, prevision hors-echantillon (Classes 3-4)
+
+L'idee centrale est simple : quand le petrole monte, est-ce parce que l'economie va bien (hausse de la **demande**) ou parce qu'il y a un choc d'offre (guerre, OPEP, geopolitique) ? Ces deux causes ont des effets opposes sur les marches :
+- **Petrole monte par la demande** → l'economie tourne bien → les actions montent aussi → effet positif ou neutre
+- **Petrole monte par l'offre** → cout en plus pour les entreprises sans croissance → les actions baissent, le credit se tend → effet negatif
+
+Le notebook teste empiriquement cette hypothese sur la periode **1990-2026** avec des donnees Bloomberg.
 
 ---
 
-## Vue d'ensemble
+## Donnees utilisees
 
-Le notebook suit un pipeline lineaire en 14 etapes. Chaque section depend de la precedente :
+| Source | Frequence | Variables | Usage |
+|---|---|---|---|
+| Excel "Daily" | Journalier (9443 obs, 1990-2026) | WTI, Brent, S&P 500, MSCI EM, US 10Y, US 2Y, HY yield, Gold | Prix de marche |
+| Excel "Monthly" | Mensuel (435 obs) | CFNAI, ISM Manufacturing | Indicateurs macro d'activite |
+
+Le CFNAI (Chicago Fed National Activity Index) est un composite de 85 indicateurs economiques — c'est notre proxy de la demande globale. L'ISM Manufacturing sert de proxy alternatif plus simple (au-dessus de 50 = expansion, en-dessous = contraction).
+
+---
+
+## Architecture du notebook (96 cellules)
+
+Le notebook est **self-contained** : toutes les fonctions sont definies dans le notebook lui-meme (Cells 3-44), pas d'import depuis `src/`. Ca le rend reproductible par n'importe qui sans installation particuliere.
 
 ```
-Donnees brutes (Excel)
-  -> Nettoyage + aggregation mensuelle
-    -> Construction de variables (log-rendements, spreads)
-      -> Diagnostics statistiques
-        -> Decomposition du petrole (demande vs offre)
-          -> Regressions predictives
-          -> Tests de causalite
-          -> Modele VAR + reponses impulsionnelles
-          -> Prevision hors-echantillon
-          -> Tests de robustesse
-            -> Conclusions
+Cells 0-2:   Introduction + Imports
+Cells 3-44:  Definition de TOUTES les fonctions (toolkit)
+Cells 45-47: Chargement des donnees
+Cells 48-49: Aggregation mensuelle
+Cells 50-51: Construction des variables
+Cells 52-60: Diagnostics statistiques
+Cells 61-71: Decomposition du petrole
+Cells 72-77: Regressions predictives
+Cells 78-81: Tests de causalite
+Cells 82-86: VAR + IRF + FEVD
+Cells 87-90: Prevision hors-echantillon
+Cells 91-93: Tests de robustesse
+Cells 94-95: Conclusions
 ```
 
 ---
 
-## Section 1 — Introduction (Cell 0)
+## Pourquoi cette structure ?
 
-**But** : Poser la question et le cadre methodologique.
+Le pipeline suit la logique standard d'un papier empirique en finance :
 
-**Pourquoi c'est important** : On precise d'emblee que l'approche est en **forme reduite** (on ne pretend pas identifier structurellement l'offre et la demande, on decompose statistiquement). Ca fixe les attentes pour toute la suite.
+1. **D'abord comprendre les donnees** (Sections 4-7) — avant de modeliser, il faut savoir ce qu'on a : les series sont-elles stationnaires ? normales ? autocorrelees ? Sans cette etape, on risque de construire un modele sur des bases fragiles.
 
----
+2. **Puis decomposer le petrole** (Section 8) — c'est le coeur du projet. On ne peut pas tester l'asymetrie demande/offre sans avoir d'abord construit les deux composantes.
 
-## Section 2 — Imports (Cells 1-2)
+3. **Ensuite tester les predictions** (Sections 9-12) — est-ce que la decomposition a une valeur predictive ? On teste d'abord in-sample (regressions), puis on valide out-of-sample (prevision).
 
-**Ce qu'on charge** :
-- `pandas` / `numpy` : manipulation de donnees
-- `statsmodels` : VAR, tests ADF, Granger, Ljung-Box
-- `scipy.stats` : Jarque-Bera, distribution chi2, distribution t de Student
-- `scipy.optimize.minimize` : optimisation numerique pour le MA(1)
-- `matplotlib` : graphiques
+4. **Enfin verifier la robustesse** (Section 13) — les resultats tiennent-ils avec d'autres mesures du petrole ? d'autres marches ? d'autres periodes ?
 
-**Pourquoi tout charger en une fois** : Le notebook est self-contained (pas d'import depuis `src/`). Tout est defini dans le notebook lui-meme pour que n'importe qui puisse le lire et le reproduire sans avoir besoin du reste du repo.
+Chaque section **necessite** que les precedentes soient faites. On ne peut pas faire la decomposition sans les variables, ni les regressions sans la decomposition, ni la robustesse sans les regressions. C'est un pipeline strictement lineaire.
 
 ---
 
-## Section 3 — Fonctions helpers (Cells 3-44)
+## Section par section : pourquoi on passe de l'une a l'autre
 
-C'est le coeur technique. **42 cellules** qui definissent toutes les fonctions avant de les utiliser. Chaque fonction a sa propre cellule pour pouvoir etre lue et comprise independamment.
+### Section 1 — Introduction (Cell 0)
 
-### 3a. Constantes (Cells 4-5)
+On pose la question de recherche et on precise le cadre : l'approche est en **forme reduite**. Ca veut dire qu'on ne pretend pas identifier structurellement les chocs d'offre et de demande (comme le fait Kilian 2009 avec un SVAR). On decompose statistiquement les rendements petroliers en une partie correlee a l'activite economique (demande) et un residu (tout le reste). C'est plus modeste mais plus transparent.
 
-```python
-DAILY_COLUMNS = ["date", "wti", "brent", "sp500", "msci_em", "us10y", "us2y", "hy_ytw", "gold"]
-MONTHLY_COLUMNS = ["date", "cfnai", "ism_mfg"]
-SHEET_USECOLS = {"Daily": [0, 1, 2, 6, 8, 10, 11, 12, 13], "Monthly": [0, 2, 3]}
-```
-
-**Pourquoi** : Le fichier Excel contient beaucoup plus de colonnes que ce dont on a besoin. `SHEET_USECOLS` selectionne uniquement les colonnes utiles au projet. Les noms courts (`wti`, `sp500`...) remplacent les libelles Bloomberg longs et compliques.
+**→ On passe a la Section 2 parce qu'on a besoin de charger les outils avant de travailler.**
 
 ---
 
-### 3b. Chargement des donnees (Cells 6-8)
+### Section 2 — Imports (Cells 1-2)
 
-**`load_data_sheet()`** : Lit une feuille Excel, nettoie les en-tetes Bloomberg (les 5 premieres lignes sont du metadata), convertit les dates et les chiffres.
+On charge toutes les librairies Python necessaires. Le notebook utilise :
+- `pandas`/`numpy` pour la manipulation de donnees
+- `statsmodels` pour les modeles econometriques (VAR, ADF, Granger, Ljung-Box)
+- `scipy.stats` pour les tests statistiques (Jarque-Bera, chi2, Student)
+- `scipy.optimize.minimize` pour l'estimation MLE du MA(1)
+- `matplotlib` pour les graphiques
 
-**`aggregate_daily_to_monthly()`** : Transforme les donnees journalieres en mensuelles.
-
-**Pourquoi passer au mensuel** : Les donnees macro (CFNAI, ISM) ne sont disponibles qu'en mensuel. Pour pouvoir les utiliser comme regresseurs, il faut que tout soit a la meme frequence.
-
-**Comment** :
-- On prend la **derniere observation du mois** pour les prix (WTI, S&P 500, etc.)
-- On calcule la **volatilite realisee** du S&P 500 = ecart-type des log-rendements journaliers dans le mois. C'est une mesure de risque qu'on utilisera comme variable de controle plus tard.
-
-**Pourquoi la derniere obs et pas la moyenne** : En finance, on utilise le dernier prix du mois pour calculer les rendements mensuels (c'est le standard). La moyenne lisserait trop et introduirait un biais.
+**→ On passe a la Section 3 pour definir les fonctions qui implementent toute la methodologie.**
 
 ---
 
-### 3c. Construction des variables (Cells 9-11)
+### Section 3 — Fonctions helpers (Cells 3-44)
 
-**`add_log_return()`** : Calcule `ln(P_t / P_{t-1})` — le log-rendement.
+42 cellules qui definissent toutes les fonctions. On les definit **avant** de les utiliser pour deux raisons :
+1. Le notebook est self-contained (pas de dependance externe)
+2. Chaque fonction est dans sa propre cellule pour etre lisible independamment
 
-**Pourquoi des log-rendements** : 
-1. Ils sont additifs dans le temps (le rendement sur 2 mois = somme des rendements mensuels)
-2. Ils sont approximativement normaux pour de petites variations
-3. C'est le standard en finance empirique et en econometrie financiere
+Les fonctions sont organisees par theme :
 
-**`build_project_variables()`** : Cree toutes les variables a partir des prix bruts :
-- **Log-rendements** : WTI, Brent, S&P 500, MSCI EM, Gold
-- **Term spread** : US 10Y - US 2Y (pente de la courbe des taux, indicateur du cycle economique)
-- **HY change** : variation mensuelle du yield high-yield (mesure le resserrement/assouplissement du credit)
+| Sous-section | Cells | Fonctions | Lien avec le cours |
+|---|---|---|---|
+| Constantes | 4-5 | Noms de colonnes, indices Excel | — |
+| Chargement donnees | 6-8 | `load_data_sheet()`, `aggregate_daily_to_monthly()` | — |
+| Variables | 9-11 | `add_log_return()`, `build_project_variables()` | Classe 2 (rendements) |
+| ADF | 12-13 | `run_adf_table()` | Classe 2 (stationnarite) |
+| Ljung-Box + JB | 14-16 | `run_ljungbox_jb_table()`, `run_diagnostic_residuals()` | Classe 2 (p.20-35) |
+| OLS from scratch | 17-19 | `ols_from_scratch()`, `ols_summary_df()` | Classe 3 (p.12-18) |
+| MA(1) MLE | 20-25 | `estimate_ma1()`, `opg_standard_errors()` | Classe 4 (MLE, ARMA) |
+| Decomposition | 26-29 | `decompose_oil_returns_scratch()`, `add_regime_variables()` | Classe 3 (OLS) |
+| Regressions predictives | 30-33 | `fit_predictive_regression()`, `interpret_two_component_model()` | Classe 3 (p.38) |
+| Rolling coefficients | 34-35 | `rolling_predictive_coefficients()` | Classe 3 |
+| Granger | 36-37 | `granger_pvalue_table()` | Classe 5 (p.42-45) |
+| Geweke | 38-39 | `geweke_causality()` | Classe 6 (p.14-22) |
+| VAR + Forecast | 40-44 | `choose_var_lag()`, `fit_var_model()`, `rolling_forecast_comparison()` | Classe 5 (p.17-27) |
 
-**Pourquoi ces variables** : Elles couvrent les 3 dimensions du marche financier pertinentes pour notre question :
-- **Actions** (S&P 500, MSCI EM) — est-ce que le petrole predit les rendements boursiers ?
-- **Credit** (HY spread) — est-ce que le petrole affecte le risque de credit ?
-- **Controles** (term spread, gold, volatilite) — pour isoler l'effet propre du petrole
-
----
-
-### 3d. Test ADF de stationnarite (Cell 12-13)
-
-**`run_adf_table()`** : Applique le test Augmented Dickey-Fuller a chaque serie.
-
-**Pourquoi tester la stationnarite** : Toute la suite (regressions, VAR, Granger) suppose que les series sont stationnaires. Si une serie a une racine unitaire (tendance stochastique), les t-stats classiques sont invalides et les regressions peuvent etre fallacieuses (spurious regression).
-
-**Methode** : `adfuller(series, autolag="AIC")` — le nombre de retards est choisi automatiquement par le critere AIC.
-
-**Ce qu'on espere** : p-value < 0.05 pour toutes les series → on peut les utiliser telles quelles.
+**→ On passe a la Section 4 parce que les outils sont prets, il faut maintenant charger les donnees.**
 
 ---
 
-### 3e. Ljung-Box et Jarque-Bera (Cells 14-16)
+### Section 4 — Chargement des donnees (Cells 45-47)
 
-**`run_ljungbox_jb_table()`** : Deux tests complementaires :
+**Cell 46** : On localise le fichier Excel (le chemin change selon qu'on lance le notebook depuis `notebooks/` ou depuis la racine du repo).
 
-1. **Ljung-Box** : Teste si les donnees sont autocorrelees (est-ce que la valeur d'aujourd'hui depend des valeurs passees ?). On teste aux lags 6 et 12.
-   - **Pourquoi c'est important** : Si les residus d'un modele sont autocorreles, les erreurs standards sont biaisees et les tests d'hypothese ne sont pas fiables.
+**Cell 47** : On charge les deux feuilles :
+- `daily_raw` → 9443 lignes × 9 colonnes (prix journaliers de jan 1990 a mars 2026)
+- `monthly_raw` → 435 lignes × 3 colonnes (CFNAI et ISM mensuels)
 
-2. **Jarque-Bera** : Teste si les donnees suivent une loi normale (basee sur la skewness et la kurtosis).
-   - **Pourquoi** : Beaucoup de procedures statistiques supposent la normalite. Si les donnees ne sont pas normales, il faut utiliser des erreurs standards robustes (ce qu'on fait avec HC1 plus tard).
+La fonction `load_data_sheet()` fait le menage : elle saute les 5 premieres lignes de metadata Bloomberg, renomme les colonnes, convertit les types, et trie par date.
 
-**`run_diagnostic_residuals()`** : Meme logique mais appliquee aux residus d'un modele (utilisee apres chaque regression pour verifier que le modele est bien specifie).
-
----
-
-### 3f. OLS from scratch (Cells 17-19)
-
-**`ols_from_scratch()`** : Regression OLS implementee a la main.
-
-**Pourquoi ne pas juste utiliser statsmodels** : C'est pedagogique — on montre exactement ce qui se passe :
-
-```
-beta = (X'X)^{-1} X'y        ← estimateur OLS
-sigma2 = SSR / (T - k - 1)   ← variance des residus
-var(beta) = sigma2 * (X'X)^{-1}  ← matrice de variance-covariance
-se = sqrt(diag(var(beta)))    ← erreurs standards
-t = beta / se                 ← statistiques de test
-p = 2 * P(|t| > |t_obs|)     ← p-values bilaterales
-```
-
-**`ols_summary_df()`** : Formate les resultats en DataFrame propre.
+**→ On passe a la Section 5 parce qu'on a deux DataFrames a des frequences differentes (journalier vs mensuel) et il faut les unifier avant de pouvoir travailler.**
 
 ---
 
-### 3g. MA(1) MLE (Cells 20-25)
+### Section 5 — Aggregation mensuelle (Cell 48-49)
 
-C'est la partie la plus technique. **Pourquoi en a-t-on besoin** : Quand on fait la decomposition OLS du petrole (Section 8), les residus montrent de l'autocorrelation. Ca veut dire que le modele OLS simple est mal specifie. La correction MA(1) resout ce probleme.
+**Le probleme** : Les donnees macro (CFNAI, ISM) n'existent qu'en mensuel. Les prix de marche sont journaliers. On ne peut pas les combiner directement.
 
-**`ma_innovations(u, theta)`** : Inversion recursive du processus MA(1).
-- Si les erreurs suivent `u_t = epsilon_t + theta * epsilon_{t-1}`, on retrouve les innovations `epsilon_t` par :
-  ```
-  epsilon_0 = u_0
-  epsilon_t = u_t - theta * epsilon_{t-1}
-  ```
+**La solution** : `aggregate_daily_to_monthly()` convertit les prix journaliers en mensuels en prenant la **derniere observation de chaque mois** (standard en finance — c'est le prix de cloture de fin de mois qui sert a calculer les rendements mensuels).
 
-**`_loglik_contributions()`** : Calcule la log-vraisemblance de chaque observation (necessaire pour les erreurs standards OPG).
+En plus, on calcule la **volatilite realisee du S&P 500** = ecart-type des log-rendements journaliers dans le mois. C'est une mesure de risque qu'on utilisera comme variable de controle dans les regressions (une volatilite elevee peut affecter les rendements futurs independamment du petrole).
 
-**`_negloglik_concentrated()`** : Log-vraisemblance negative totale a minimiser. "Concentree" car sigma2 est estime analytiquement a chaque evaluation.
+Ensuite on fait un **inner join** entre les donnees de marche mensualisees et les donnees macro. Inner join = on ne garde que les mois ou on a les deux. Resultat : `monthly_merged` (434 mois × 12 colonnes).
 
-**`opg_standard_errors()`** : Erreurs standards OPG (Outer Product of Gradients).
-- **Pourquoi OPG et pas Hessienne** : L'OPG ne necessite que le gradient (premiere derivee), pas la Hessienne (seconde derivee). On les calcule par differences finies numeriques. C'est plus simple et suffisamment precis pour notre usage.
-
-**`estimate_ma1()`** : Orchestre tout :
-1. Fait d'abord un OLS classique pour avoir un point de depart
-2. Optimise la vraisemblance avec Nelder-Mead (algorithme sans gradient, robuste)
-3. Calcule les erreurs standards OPG au point optimal
-
-**`ma1_comparison_table()`** : Met cote a cote les resultats OLS et MLE pour comparer.
+**→ On passe a la Section 6 parce qu'on a les prix mensuels bruts mais les regressions necessitent des rendements et des spreads, pas des niveaux de prix.**
 
 ---
 
-### 3h. Decomposition petroliere (Cells 26-29)
+### Section 6 — Construction des variables (Cells 50-51)
 
-**C'est la piece maitresse du projet.**
+**Pourquoi transformer les prix en rendements** : Les prix sont non-stationnaires (ils ont une tendance). Les rendements sont (generalement) stationnaires. Toute l'econometrie qui suit (OLS, VAR, Granger) suppose la stationnarite.
 
-**Approche A — OLS** : `decompose_oil_returns_scratch()`
+`build_project_variables()` cree :
+
+| Variable | Formule | Interpretation |
+|---|---|---|
+| `wti_return` | `ln(WTI_t / WTI_{t-1})` | Rendement mensuel du petrole WTI |
+| `brent_return` | `ln(Brent_t / Brent_{t-1})` | Idem pour le Brent (robustesse) |
+| `sp500_return` | `ln(SP500_t / SP500_{t-1})` | Rendement mensuel des actions US |
+| `msci_em_return` | `ln(MSCI_EM_t / MSCI_EM_{t-1})` | Rendement actions emergentes (robustesse) |
+| `gold_return` | `ln(Gold_t / Gold_{t-1})` | Rendement de l'or (controle valeur refuge) |
+| `term_spread` | `US10Y - US2Y` | Pente de la courbe des taux (indicateur du cycle) |
+| `hy_change` | `HY_t - HY_{t-1}` | Variation du yield high-yield (risque credit) |
+
+**Pourquoi ces variables** : Elles couvrent les 3 dimensions du projet :
+- **Petrole** : WTI (+ Brent pour robustesse) — la variable qu'on decompose
+- **Marches** : S&P 500, HY, MSCI EM — les variables qu'on essaie de predire
+- **Controles** : term spread, gold, volatilite — des facteurs qui affectent les marches independamment du petrole
+
+Resultat : `project_df` (434 × 19).
+
+**→ On passe a la Section 7 parce qu'avant de modeliser, il faut verifier que les donnees sont "propres" : stationnaires, sans autocorrelation parasite, et comprendre leur distribution.**
+
+---
+
+### Section 7 — Diagnostics statistiques (Cells 52-60)
+
+C'est une etape obligatoire en econometrie. On ne modele jamais sans avoir d'abord explore les donnees.
+
+**Cell 53 — Stats descriptives (Table 1)** :
+On calcule les 4 premiers moments (moyenne, ecart-type, skewness, kurtosis) de chaque variable. Ce qu'on cherche :
+- La kurtosis du WTI est de ~10 (les queues sont tres epaisses — il y a des chocs extremes). Ca justifie l'utilisation d'erreurs robustes HC1 plus tard.
+- Le CFNAI a une kurtosis de ~168 (domination par quelques mois extremes comme la crise COVID). Il faut en etre conscient pour interpreter la decomposition.
+
+**→ Cell 53 vers Cell 54** : Apres avoir vu les proprietes univariees, on regarde les relations bivariees.
+
+**Cell 54 — Correlations (Table 2)** :
+La matrice de correlation montre les liens bruts entre variables. Par exemple, si WTI et S&P 500 sont tres correles positivement, l'histoire "demande" est plausible. Si la correlation est faible ou negative, l'histoire "offre" domine.
+
+**→ Cell 54 vers Cell 55** : Les correlations sont des chiffres, les graphiques permettent de voir les patterns temporels.
+
+**Cell 55 — Graphiques temporels (Figures 1-3)** :
+On visualise WTI return, S&P 500 return, et HY change sur toute la periode. On repere visuellement :
+- Les periodes de crise (2008, COVID)
+- Les clusters de volatilite
+- Les eventuels breaks structurels
+
+**→ Cell 55 vers Cell 56** : Les graphiques suggerent des series stationnaires, mais il faut le confirmer formellement.
+
+**Cell 56 — Tests ADF (Table 3a)** :
+Le test Augmented Dickey-Fuller teste l'hypothese nulle d'une racine unitaire. Si p < 0.05, la serie est stationnaire. C'est un **prerequis** pour toute la suite : si une serie n'est pas stationnaire, les regressions OLS et le VAR donnent des resultats fallacieux (spurious regression).
+
+**→ Cell 56 vers Cell 57** : La stationnarite est confirmee. Maintenant on teste la normalite et l'autocorrelation.
+
+**Cell 57 — Ljung-Box + Jarque-Bera (Table 3b)** :
+- **Ljung-Box** : teste si les valeurs passees d'une serie predisent ses valeurs futures (autocorrelation). Si oui, ca signifie qu'on peut potentiellement exploiter cette persistance dans un modele.
+- **Jarque-Bera** : teste si les donnees sont normales. Resultat : aucune serie n'est normale (p < 0.05 pour toutes). Ca justifie l'utilisation d'erreurs robustes HC1 dans les regressions.
+
+**→ Cell 57 vers Cells 59-60** : On a detecte de la non-normalite. Un des faits stylises des donnees financieres est le "volatility clustering" (les periodes agitees sont suivies de periodes agitees). On le teste formellement.
+
+**Cells 59-60 — Volatility clustering (Figure 4)** :
+On calcule l'ACF des rendements **au carre** (proxy de la volatilite). Si l'ACF est significative aux premiers lags, il y a du clustering. Le test Ljung-Box sur les carres confirme. C'est un fait stylise classique — pas un probleme a corriger, mais un element a garder en tete pour l'interpretation.
+
+**→ On passe a la Section 8 parce que les diagnostics confirment que les donnees sont exploitables : stationnaires, avec des proprietes bien comprises. On peut maintenant decomposer le petrole.**
+
+---
+
+### Section 8 — Decomposition petroliere (Cells 61-71)
+
+**C'est la piece maitresse du projet.** Tout ce qui suit depend de cette decomposition.
+
+**Cell 62 — OLS from scratch (Table 4)** :
+On estime la regression :
 ```
 r_wti = alpha + beta * CFNAI + epsilon
 ```
-- **Fitted values** (`alpha + beta * CFNAI`) = composante **demande**
-  - Interpretation : la partie du rendement petrolier qui est expliquee par l'activite economique
-- **Residus** (`epsilon`) = composante **offre/residuelle**
-  - Interpretation : tout ce qui n'est pas lie a la demande (chocs d'offre, geopolitique, speculation)
+- **Fitted values** (alpha + beta × CFNAI) = **composante demande** → la partie du rendement petrolier expliquee par l'activite economique
+- **Residus** (epsilon) = **composante offre** → tout ce qui n'est pas lie a la demande (chocs d'offre, geopolitique, speculation)
 
-**Pourquoi le CFNAI** : Le Chicago Fed National Activity Index est un indice composite de 85 indicateurs d'activite economique. C'est un proxy large et reconnu de la demande globale.
+Le R2 est faible (~4%) — le CFNAI n'explique qu'une petite partie du petrole. C'est normal : le marche petrolier est domine par l'offre (OPEP, guerres). Mais meme 4% suffit pour creer une decomposition utile.
 
-**`decompose_oil_returns()`** : Meme chose mais avec `statsmodels` au lieu de from scratch. Utile pour les tests de robustesse.
+**→ Cell 62 vers Cell 63** : On a un modele. Il faut maintenant verifier que ses residus sont "propres".
 
-**Approche B — Regimes ISM** : `add_regime_variables()`
-- Si ISM > 50 → **expansion** (l'economie croit)
-- Si ISM <= 50 → **contraction** (l'economie decroit)
-- On cree : `oil_expansion` = rendement petrolier × dummy expansion
-- Et : `oil_contraction` = rendement petrolier × dummy contraction
+**Cell 63 — Diagnostics des residus** :
+Le Ljung-Box montre de l'autocorrelation significative dans les residus. Ca veut dire que le modele OLS est mal specifie — les erreurs standards sont biaisees. Il faut corriger.
 
-**Pourquoi deux approches** : Ca montre que les resultats ne dependent pas d'un choix methodologique unique. Si les deux approches pointent dans la meme direction, les conclusions sont plus robustes.
+**→ Cell 63 vers Cell 64** : On visualise l'autocorrelation pour comprendre sa structure.
+
+**Cell 64 — ACF des residus (Figure 5)** :
+Le barplot ACF montre quels lags sont significatifs. Ca guide le choix de la correction.
+
+**→ Cell 64 vers Cells 66-69** : L'autocorrelation est detectee, on corrige avec un modele MA(1).
+
+**Cells 66-69 — Correction MA(1)** :
+On estime le meme modele mais avec des erreurs MA(1) par maximum de vraisemblance. L'idee : si `epsilon_t = innovation_t + theta * innovation_{t-1}`, l'OLS ignore cette structure et biaise les erreurs standards.
+
+**Cell 66** (Table 5) montre la comparaison OLS vs MLE cote a cote.
+**Cell 67** : Le beta du CFNAI passe de 0.0184 (OLS) a 0.0154 (MLE) — tres proche. La decomposition est **robuste** a la correction MA(1). C'est rassurant.
+**Cell 68** : Les diagnostics des innovations MA(1) montrent moins d'autocorrelation.
+**Cell 69** (Figure 6) : Comparaison visuelle des ACF avant/apres correction.
+
+**→ Cells 66-69 vers Cell 70** : La decomposition OLS est validee. On ajoute maintenant l'approche alternative par regimes.
+
+**Cell 70 — Regimes ISM** :
+On cree des variables d'interaction : `oil_expansion` (rendement WTI quand ISM > 50) et `oil_contraction` (quand ISM ≤ 50). C'est une approche differente de l'OLS : au lieu d'une relation lineaire continue, on fait une distinction binaire.
+
+**→ Cell 70 vers Cell 71** : On visualise les composantes pour verifier leur coherence economique.
+
+**Cell 71 — Graphiques (Figures 7-8)** :
+- Figure 7 : WTI return superpose avec la composante demande → on voit que la demande lisse le signal
+- Figure 8 : La composante offre seule → on voit les gros chocs (2008, 2014-15, 2020)
+
+**→ On passe a la Section 9 parce qu'on a maintenant les deux composantes (demande + offre). La question suivante est : est-ce que ces composantes predisent differemment les marches ?**
 
 ---
 
-### 3i. Regressions predictives (Cells 30-33)
+### Section 9 — Regressions predictives (Cells 72-77)
 
-**`fit_predictive_regression()`** :
+**Cell 73 — Modele decomposition** :
+Pour chaque cible (S&P 500, HY spread), on estime :
 ```
-y_{t+1} = alpha + beta_1 * demand_t + beta_2 * supply_t + controles_t + epsilon
+y_{t+1} = alpha + beta_1 * demande_t + beta_2 * offre_t + controles_t + epsilon
 ```
 
-**Le decalage `shift(-1)` est crucial** : On predit le rendement du mois **suivant** avec les variables du mois **courant**. Sans ce decalage, on aurait une regression contemporaine (correlation) et pas une regression predictive (causalite au sens de Granger).
+Le `shift(-1)` est **crucial** : on predit le rendement du mois **suivant** avec les informations du mois **courant**. Sans ce decalage, ce serait juste une correlation contemporaine, pas une prevision.
 
-**Erreurs robustes HC1** : Comme les donnees financieres sont heteroscedastiques (la variance change dans le temps), les erreurs standards classiques sont biaisees. HC1 corrige ca.
+Les erreurs robustes HC1 corrigent l'heteroscedasticite (la variance change dans le temps — typique en finance).
 
-**`interpret_two_component_model()`** : Resume automatiquement si chaque composante est significative et dans quel sens.
+Apres chaque regression, on fait des diagnostics de residus (`run_diagnostic_residuals`) pour verifier que le modele est bien specifie.
 
----
+**→ Cell 73 vers Cell 74** : On a teste l'approche decomposition. On teste maintenant l'approche regime pour comparer.
 
-### 3j. Coefficients rolling (Cells 34-35)
+**Cell 74 — Modele regime** :
+Meme exercice mais avec `oil_expansion` et `oil_contraction` au lieu de demande/offre. Si les deux approches pointent dans la meme direction, les conclusions sont plus solides.
 
-**`rolling_predictive_coefficients(window=60)`** : Estime la regression predictive sur une fenetre glissante de 60 mois.
+**→ Cell 74 vers Cells 76-77** : Les coefficients sont estimes sur l'echantillon complet. Mais sont-ils stables dans le temps ?
 
-**Pourquoi** : Pour verifier que la relation demande/offre est **stable dans le temps**. Si le coefficient change de signe ou disparait a certaines periodes, la relation n'est pas fiable.
+**Cells 76-77 — Coefficients rolling (Figure 9)** :
+On estime la regression sur une fenetre glissante de 60 mois et on trace l'evolution des coefficients. Si le beta de la composante offre change de signe ou disparait a certaines periodes, le resultat n'est pas fiable. Les bandes ±2 erreurs standards montrent l'incertitude.
 
----
-
-### 3k. Granger causality (Cells 36-37)
-
-**`granger_pvalue_table()`** : Test de Granger — est-ce que les valeurs passees de X aident a predire Y au-dela de ce que les valeurs passees de Y predisent deja ?
-
-**Methode** : On compare deux modeles :
-- Restreint : `Y_t = f(Y_{t-1}, ..., Y_{t-p})`
-- Non-restreint : `Y_t = f(Y_{t-1}, ..., Y_{t-p}, X_{t-1}, ..., X_{t-p})`
-- F-test sur la difference de SSR
-
-**Ce qu'on teste** : Est-ce que la composante demande ou offre du petrole "Granger-cause" les rendements actions ou le spread HY ?
+**→ On passe a la Section 10 parce que les regressions montrent des coefficients, mais on veut tester plus formellement si c'est de la "causalite" au sens statistique (Granger).**
 
 ---
 
-### 3l. Mesures de Geweke (Cells 38-39)
+### Section 10 — Tests de causalite (Cells 78-81)
 
-**`geweke_causality()`** : Approche plus riche que Granger — decompose la dependance totale en 3 parties :
+**Cell 79 — Granger F-tests (Table 6)** :
+On teste 4 paires : {demande, offre} × {S&P 500, HY}. A chaque fois, la question est : est-ce que les **lags** de la composante petrole aident a predire le marche, au-dela de ce que les lags du marche lui-meme predisent deja ?
 
-1. **C_{2→1}** : Causalite de var2 vers var1 (est-ce que les lags de WTI aident a predire S&P ?)
-2. **C_{1→2}** : Causalite de var1 vers var2 (l'inverse)
-3. **C_inst** : Dependance instantanee (correlation contemporaine non expliquee par les lags)
-4. **C_total** = C_{2→1} + C_{1→2} + C_inst
+C'est un test plus formel que la regression de la Section 9 : ici on compare explicitement un modele avec et sans les lags de la variable "cause".
 
-**Pourquoi Geweke en plus de Granger** : Geweke permet de quantifier la **taille** de la causalite (pas juste un oui/non), et de decomposer en directionnelle + instantanee.
+**→ Cell 79 vers Cell 80** : Granger est bivariate et se limite a la precedence temporelle. Geweke est plus riche.
 
-**Test** : `T * C ~ chi2(df)` — test asymptotique.
+**Cell 80 — Geweke global (Table 7)** :
+On change de perspective : au lieu de travailler sur les rendements mensuels, on utilise les **variances rolling journalieres** (fenetre de 60 jours). C'est l'approche de la Classe 6 (p.19-22) appliquee a notre question.
+
+Geweke decompose la dependance totale en :
+- **Causalite directionnelle** WTI → S&P et S&P → WTI
+- **Dependance instantanee** (correlation contemporaine)
+- **Total** = somme des trois
+
+Ca permet de quantifier la **taille** de la causalite (pas juste un oui/non comme Granger) et de voir si c'est bidirectionnel.
+
+**→ Cell 80 vers Cell 81** : La causalite est-elle constante ou change-t-elle dans le temps ?
+
+**Cell 81 — Geweke par sous-periodes (Table 8)** :
+On decoupe en blocs de 5 ans (2000-2004, 2005-2009, ...) et on recalcule Geweke sur chaque bloc. Ca revele si la transmission petrole → actions s'est renforcee ou affaiblie au fil du temps.
+
+**→ On passe a la Section 11 parce que les tests de causalite sont bivaries (2 variables a la fois). Le VAR permet d'analyser le systeme complet (6 variables simultanement) et de voir comment un choc se propage.**
 
 ---
 
-### 3m. VAR et prevision (Cells 40-44)
+### Section 11 — VAR et reponses impulsionnelles (Cells 82-86)
 
-**`choose_var_lag()`** : Selection du nombre de retards via BIC (critere d'information bayesien — favorise la parcimonie).
+**Cell 83 — Selection du lag (Table 9)** :
+On compare les criteres d'information (AIC, BIC, HQ, FPE) pour choisir le nombre de retards du VAR. Le BIC favorise la parcimonie (moins de parametres) — c'est le choix par defaut. Si BIC dit 0, on prend AIC.
 
-**`fit_var_model()`** : Estime un VAR en forme reduite (chaque variable est regressee sur les lags de toutes les variables).
+Le VAR inclut 6 variables : `wti_return`, `sp500_return`, `hy_change`, `term_spread`, `gold_return`, `ism_mfg`. C'est le systeme complet qu'on etudie.
 
-**`rolling_forecast_comparison()`** : Compare 3 modeles en prevision hors-echantillon :
-1. **Benchmark** : moyenne historique (difficile a battre en finance)
-2. **Modele brut** : WTI comme seul predicteur petrolier
+**→ Cell 83 vers Cell 84** : Le lag est choisi, on peut estimer le modele.
+
+**Cell 84 — Estimation + diagnostics (Table 10)** :
+On estime le VAR et on verifie deux choses :
+1. **Stabilite** : toutes les valeurs propres de la matrice compagnon sont dans le cercle unite. Si ce n'est pas le cas, le VAR est explosif et inutilisable.
+2. **Ljung-Box sur les residus** : les residus de chaque equation du VAR ne doivent pas etre autocorreles. Si oui, le lag est insuffisant.
+
+**→ Cell 84 vers Cell 85** : Le VAR est stable et bien specifie. On peut maintenant simuler des chocs.
+
+**Cell 85 — IRF (Figures 10-11)** :
+Les Impulse Response Functions repondent a la question : "si le petrole subit un choc de 1 ecart-type aujourd'hui, comment reagissent le S&P 500 et le HY spread sur les 24 mois suivants ?"
+
+On utilise l'orthogonalisation de **Cholesky** (Classe 5, p.51-60) : on decompose la matrice de variance-covariance des residus en Sigma = P × P' et on regarde les chocs orthogonalises. L'ordre des variables dans le VAR compte — WTI est en premier, ce qui lui donne la priorite dans l'identification.
+
+Les bandes de confiance sont calculees par **Monte Carlo** (300 replications) : on resimule le VAR avec des residus bootstrappes et on calcule les IRF a chaque fois pour avoir un intervalle.
+
+**→ Cell 85 vers Cell 86** : Les IRF montrent la dynamique du choc. La FEVD repond a une question complementaire.
+
+**Cell 86 — FEVD (Table 11)** :
+La Forecast Error Variance Decomposition repond a : "quelle part de l'incertitude de prevision du S&P 500 a horizon 12 mois est expliquee par les chocs petroliers ?" Si c'est 5%, le petrole est un facteur mineur. Si c'est 30%, c'est un facteur dominant.
+
+**→ On passe a la Section 12 parce que tout ce qui precede est "in-sample" (on utilise toutes les donnees pour estimer et evaluer). Le vrai test est la prevision hors-echantillon.**
+
+---
+
+### Section 12 — Prevision hors-echantillon (Cells 87-90)
+
+**Cell 88 — Comparaison rolling OLS (Table 12)** :
+On compare 3 modeles en prevision recursive :
+1. **Benchmark** : moyenne historique (tres difficile a battre en finance — c'est le test acide)
+2. **Modele brut** : WTI return comme seul predicteur petrolier
 3. **Modele decompose** : composantes demande + offre separees
 
-**Pourquoi cette comparaison** : Si le modele decompose ne bat pas le benchmark, la decomposition n'a pas de valeur ajoutee pratique pour la prevision (meme si les coefficients sont significatifs in-sample).
+On utilise 60% des donnees pour la premiere estimation, puis on avance mois par mois en reestimant a chaque pas. Le RMSE et le MAE mesurent la qualite de prevision.
+
+Si le modele decompose ne bat pas le benchmark, la decomposition a une valeur explicative (on comprend mieux) mais pas predictive (on ne prevoit pas mieux).
+
+**→ Cell 88 vers Cells 89-90** : On a teste les modeles OLS. On teste maintenant le VAR en prevision.
+
+**Cells 89-90 — Prevision VAR (Table 13, Figures 12-13)** :
+On coupe l'echantillon en deux : train (avant 2020) et test (apres 2020). On entraine le VAR sur le train et on prevoit 12 mois. La periode post-2020 inclut le COVID — c'est un vrai test de stress.
+
+Le RMSE du VAR est compare aux realisations. Les graphiques (Figures 12-13) montrent visuellement si le VAR capture la dynamique post-COVID.
+
+**→ On passe a la Section 13 parce que les resultats sont la. La question est : sont-ils robustes ou fragiles ?**
 
 ---
 
-## Section 4 — Chargement des donnees (Cells 45-47)
+### Section 13 — Robustesse (Cells 91-93)
 
-**Pourquoi on en est la** : Toutes les fonctions sont definies, on peut maintenant les appliquer.
+**Cell 92 — Brent + MSCI EM (Table 14)** :
+Deux tests :
+1. **Brent au lieu de WTI** : Si les resultats disparaissent en changeant le benchmark petrolier, ils sont specifiques au WTI et pas generalises au marche petrolier.
+2. **MSCI EM au lieu de S&P 500** : Est-ce que l'effet petrole est specifique aux actions US ou affecte aussi les marches emergents ?
 
-On charge le fichier Excel et on obtient :
-- `daily_raw` : 9443 observations journalieres (jan 1990 - mars 2026)
-- `monthly_raw` : 435 observations mensuelles (CFNAI + ISM)
+On regarde si les coefficients demande/offre gardent le meme signe et la meme significativite.
 
----
+**→ Cell 92 vers Cell 93** : Les resultats tiennent-ils sur differentes periodes historiques ?
 
-## Section 5 — Aggregation mensuelle (Cells 48-49)
+**Cell 93 — Sous-periodes (Table 15)** :
+On decoupe en 3 periodes :
+- **1990-2007** : avant la crise, marche petrolier "classique" domine par l'OPEP
+- **2008-2014** : crise financiere + revolution du shale americain
+- **2015-2026** : post-shale, accord OPEP+, COVID, guerre en Ukraine
 
-**Transition Cell 47 → 49** : On a des donnees journalieres et des donnees mensuelles. Il faut les fusionner. Donc on convertit d'abord le journalier en mensuel, puis on fait un merge.
+Si le coefficient de la composante offre est significatif dans une periode mais pas dans les autres, le resultat n'est pas robuste — il est driven par une periode specifique.
 
-**Output** : `monthly_merged` (434 lignes, 12 colonnes) — un seul DataFrame mensuel unifie.
-
-**Pourquoi inner join** : On ne garde que les mois ou on a a la fois les donnees de marche ET les donnees macro. Pas de donnees manquantes dans les regresseurs.
-
----
-
-## Section 6 — Construction des variables (Cells 50-51)
-
-**Transition Cell 49 → 51** : On a les prix mensuels, mais les regressions necessitent des rendements et des spreads (pas des niveaux). Il faut donc transformer.
-
-**Output** : `project_df` (434 lignes, 19 colonnes) avec toutes les variables pretes pour l'analyse.
+**→ On passe a la Section 14 pour resumer les conclusions.**
 
 ---
 
-## Section 7 — Diagnostics (Cells 52-60)
+### Section 14 — Conclusions (Cells 94-95)
 
-**Transition Cell 51 → 53** : Avant de modeliser, il faut comprendre les donnees. C'est une etape standard en econometrie.
+`interpret_two_component_model()` resume automatiquement les resultats pour chaque cible :
+- **S&P 500** : ni la demande ni l'offre ne sont significatives au seuil 5%
+- **HY spread** : la composante offre est significative (p = 0.019, coef = +0.88)
 
-**Pourquoi dans cet ordre** :
-1. **Stats descriptives** (Cell 53) : On verifie les ordres de grandeur, la dispersion, la skewness (asymetrie) et la kurtosis (queues epaisses). Les donnees financieres ont typiquement une kurtosis elevee (gros chocs rares).
-
-2. **Correlations** (Cell 54) : On repere les relations bivariees avant de passer aux regressions multivariees. Si deux variables sont tres correlees, il faudra faire attention a la multicolinearite.
-
-3. **Graphiques temporels** (Cell 55) : On visualise les series pour reperer les breaks structurels, les outliers, les periodes de crise.
-
-4. **Tests ADF** (Cell 56) : On verifie la stationnarite — prerequis pour tout le reste.
-
-5. **Ljung-Box + Jarque-Bera** (Cell 57) : On documente l'autocorrelation et la non-normalite. Ca justifie l'utilisation d'erreurs robustes plus tard.
-
-6. **Volatility clustering** (Cells 59-60) : L'ACF des rendements au carre montre si la volatilite est persistante. C'est un fait stylise classique en finance (les periodes de forte volatilite sont suivies de periodes de forte volatilite).
+**Message central** : Les chocs d'offre petroliers affectent surtout le marche du **credit** (HY spread), pas directement les **actions** (S&P 500). Quand le petrole monte pour des raisons non liees a la demande, le spread de credit s'elargit le mois suivant — ce qui signifie que le marche percoit un risque accru pour les entreprises les plus fragiles.
 
 ---
 
-## Section 8 — Decomposition petroliere (Cells 61-71)
+## Resume des methodes et leur lien avec le cours
 
-**Transition Cell 60 → 62** : Les diagnostics confirment que les series sont stationnaires. On peut maintenant faire la decomposition.
-
-**Pourquoi dans cet ordre** :
-
-1. **OLS from scratch** (Cell 62) : On decompose `r_wti = alpha + beta*CFNAI + epsilon`. On obtient la composante demande (fitted) et offre (residus).
-
-2. **Diagnostics des residus** (Cells 63-64) : On verifie si les residus OLS sont bien "propres" (pas d'autocorrelation). **Resultat** : il y a de l'autocorrelation significative → le modele OLS est mal specifie.
-
-3. **Correction MA(1)** (Cells 66-69) : Puisque les residus OLS sont autocorreles, on estime un modele avec erreurs MA(1) par MLE. On compare : si le beta CFNAI est similaire entre OLS et MLE, la decomposition est robuste malgre le probleme d'autocorrelation.
-
-4. **Regimes ISM** (Cell 70) : Approche alternative qui ne suppose pas une relation lineaire continue entre petrole et activite, mais juste une distinction binaire expansion/contraction.
-
-5. **Graphiques** (Cell 71) : On visualise les deux composantes pour verifier qu'elles ont une interpretation economique sensee.
-
----
-
-## Section 9 — Regressions predictives (Cells 72-77)
-
-**Transition Cell 71 → 73** : On a maintenant les composantes demande et offre. La question centrale est : est-ce qu'elles predisent differemment les marches ?
-
-1. **Modele decomposition** (Cell 73) : On regresse le rendement du S&P 500 du mois suivant sur les composantes demande/offre + controles. On fait pareil pour le HY spread. 
-   - **Question cle** : est-ce que beta_demande ≠ beta_offre ?
-
-2. **Modele regime** (Cell 74) : Meme exercice avec l'approche ISM.
-   - **Pourquoi les deux** : Si les deux approches donnent des resultats coherents, c'est plus convaincant.
-
-3. **Coefficients rolling** (Cells 76-77) : On verifie la stabilite dans le temps.
-   - **Pourquoi c'est crucial** : Si le coefficient de la composante offre est significatif sur l'echantillon complet mais change de signe a certaines periodes, le resultat n'est pas fiable.
+| Methode | Section | Classe du cours | Reference dans les slides |
+|---|---|---|---|
+| Moments (mean, std, skew, kurtosis) | 7 | Classe 2 | p.7-15 |
+| Jarque-Bera | 7 | Classe 2 | p.20-22 |
+| ACF + Ljung-Box | 7, 8, 9 | Classe 2 | p.30-35 |
+| Volatility clustering (ACF des carres) | 7 | Classe 2 | p.36-39 |
+| ADF (stationnarite) | 7 | Classe 2 | — |
+| OLS from scratch (beta = (X'X)^-1 X'y) | 8 | Classe 3 | p.12-18 |
+| Erreurs robustes HC1 | 9 | Classe 3 | — |
+| Out-of-sample RMSE / MAE | 12 | Classe 3 | p.38 |
+| MA(1) MLE + OPG standard errors | 8 | Classe 4 | — |
+| VAR estimation + lag selection (BIC) | 11 | Classe 5 | p.17-18, 26-27 |
+| Granger causality (F-test) | 10 | Classe 5 | p.42-45 |
+| Geweke causality measures | 10 | Classe 6 | p.14-22 |
+| IRF Cholesky orthogonalisees | 11 | Classe 5 | p.51-60 |
+| FEVD (variance decomposition) | 11 | Classe 5 | p.68-70 |
+| Application petrole → actions | 10, 11 | Classe 6 | p.19-22 (exactement notre sujet) |
 
 ---
 
-## Section 10 — Tests de causalite (Cells 78-81)
+## Glossaire
 
-**Transition Cell 77 → 79** : Les regressions predictives montrent des coefficients, mais est-ce que c'est vraiment de la "causalite" (au sens statistique) ? Les tests de Granger et Geweke repondent a cette question plus formellement.
-
-1. **Granger** (Cell 79) : Test classique — est-ce que les lags des composantes petrolieres aident a predire S&P / HY ?
-
-2. **Geweke global** (Cell 80) : On travaille ici sur les **variances rolling journalieres** (pas les rendements mensuels). C'est une perspective differente : est-ce que la volatilite du petrole cause la volatilite des actions ?
-
-3. **Geweke par sous-periodes** (Cell 81) : On decoupe en blocs de 5 ans pour voir si la causalite varie dans le temps.
-
----
-
-## Section 11 — VAR et IRF (Cells 82-86)
-
-**Transition Cell 81 → 83** : Les tests de causalite sont bivaries (2 variables a la fois). Le VAR permet d'analyser le systeme complet (6 variables simultanement).
-
-1. **Selection du lag** (Cell 83) : On choisit le nombre de retards par BIC. Trop peu = on rate de la dynamique. Trop = surparametrisation.
-
-2. **Estimation + diagnostics** (Cell 84) : On estime le VAR et on verifie :
-   - **Stabilite** : toutes les racines sont dans le cercle unite ?
-   - **Ljung-Box sur les residus** : les residus du VAR sont-ils propres ?
-
-3. **IRF — Impulse Response Functions** (Cell 85) : On simule un choc de 1 ecart-type sur le WTI et on regarde comment le S&P 500 et le HY spread reagissent sur 24 mois. Les bandes de confiance sont calculees par Monte Carlo (300 replications).
-   - **Pourquoi orthogonalise** : On utilise la decomposition de Cholesky pour isoler les chocs orthogonaux. L'ordre des variables compte.
-
-4. **FEVD** (Cell 86) : Quelle part de la variance de prevision du S&P 500 est expliquee par les chocs petroliers a horizon 12 mois ?
-
----
-
-## Section 12 — Prevision hors-echantillon (Cells 87-90)
-
-**Transition Cell 86 → 88** : Tout ce qui precede est **in-sample** (on utilise toutes les donnees pour estimer et evaluer). La prevision OOS est le test ultime : est-ce que le modele predit bien sur des donnees qu'il n'a jamais vues ?
-
-1. **Comparaison rolling OLS** (Cell 88) : 3 modeles en competition. On utilise 60% des donnees pour la premiere estimation, puis on avance mois par mois.
-   - **RMSE** (Root Mean Squared Error) : penalise les grosses erreurs
-   - **MAE** (Mean Absolute Error) : plus robuste aux outliers
-
-2. **Prevision VAR** (Cells 89-90) : On entraine le VAR sur les donnees avant 2020 et on prevoit les 12 mois suivants. 
-   - **Pourquoi 2020** : Ca inclut le COVID — un vrai test de stress pour le modele.
-
----
-
-## Section 13 — Robustesse (Cells 91-93)
-
-**Transition Cell 90 → 92** : On a des resultats. Mais sont-ils fragiles ? On teste 3 variations :
-
-1. **Brent au lieu de WTI** : Si les resultats disparaissent en changeant le benchmark petrolier, ils ne sont pas robustes.
-
-2. **MSCI EM au lieu de S&P 500** : Est-ce que l'effet petrole est specifique aux US ou generalise aux emergents ?
-
-3. **Sous-periodes** (Cell 93) :
-   - **1990-2007** : periode pre-crise, marche petrolier "classique"
-   - **2008-2014** : crise financiere + revolution du shale
-   - **2015-2026** : post-shale, COVID, guerre en Ukraine
-
----
-
-## Section 14 — Conclusions (Cells 94-95)
-
-**Transition Cell 93 → 95** : On resume les resultats principaux automatiquement.
-
-**Message central** : La composante offre/residuelle du petrole est significative pour predire les changements du spread HY (credit), mais pas les rendements du S&P 500. La composante demande n'est significative pour aucune des deux cibles. Cela suggere que ce sont les chocs d'offre petroliers qui affectent le plus le marche du credit.
-
----
-
-## Resume des methodes statistiques utilisees
-
-| Methode | Ou dans le notebook | Pourquoi |
-|---|---|---|
-| Log-rendements | Section 6 | Standard en finance, additivite temporelle |
-| ADF | Section 7 | Verifier la stationnarite avant de modeliser |
-| Ljung-Box | Sections 7, 8, 9 | Detecter l'autocorrelation dans les series et les residus |
-| Jarque-Bera | Section 7 | Tester la normalite |
-| OLS from scratch | Section 8 | Decomposition petrole = demande + offre |
-| MA(1) MLE | Section 8 | Corriger l'autocorrelation des residus OLS |
-| OPG standard errors | Section 8 | Erreurs standards pour le MLE sans Hessienne |
-| Regressions predictives HC1 | Section 9 | Tester si les composantes predisent les marches |
-| Rolling coefficients | Section 9 | Verifier la stabilite temporelle |
-| Granger causality | Section 10 | Test formel de precedence temporelle |
-| Geweke causality | Section 10 | Decomposition directionnelle + instantanee |
-| VAR | Section 11 | Modelisation multivariee du systeme complet |
-| IRF + FEVD | Section 11 | Propagation des chocs + decomposition de variance |
-| Rolling OOS forecasts | Section 12 | Validation predictive hors-echantillon |
-| Robustesse | Section 13 | Sensibilite aux choix methodologiques |
-
----
-
-## Glossaire rapide
-
-- **CFNAI** : Chicago Fed National Activity Index — composite de 85 indicateurs d'activite economique US
-- **ISM** : Institute for Supply Management Manufacturing Index — au-dessus de 50 = expansion
-- **HY** : High Yield — obligations a haut rendement (junk bonds), le spread mesure le risque de credit
-- **Term spread** : Difference entre taux long (10 ans) et court (2 ans) — indicateur de recession quand negatif
-- **HC1** : Heteroskedasticity-Consistent standard errors (White, 1980) — corrige les erreurs standards quand la variance des residus n'est pas constante
-- **ADF** : Augmented Dickey-Fuller — teste si une serie a une racine unitaire
-- **IRF** : Impulse Response Function — comment une variable reagit a un choc sur une autre
-- **FEVD** : Forecast Error Variance Decomposition — quelle part de l'incertitude de prevision vient de quel choc
-- **OPG** : Outer Product of Gradients — methode d'estimation de la matrice de variance-covariance des parametres MLE
+| Terme | Definition |
+|---|---|
+| **WTI** | West Texas Intermediate — prix de reference du petrole americain |
+| **Brent** | Prix de reference du petrole europeen/mondial |
+| **CFNAI** | Chicago Fed National Activity Index — composite de 85 indicateurs d'activite US |
+| **ISM** | Institute for Supply Management Manufacturing Index — au-dessus de 50 = expansion |
+| **HY** | High Yield — obligations a haut rendement (junk bonds) |
+| **Term spread** | US 10Y - US 2Y — pente de la courbe des taux, indicateur de recession si negatif |
+| **Log-rendement** | `ln(P_t / P_{t-1})` — standard en finance, additif dans le temps |
+| **ADF** | Augmented Dickey-Fuller — test de racine unitaire (stationnarite) |
+| **Ljung-Box** | Test d'autocorrelation jointe sur plusieurs lags |
+| **Jarque-Bera** | Test de normalite base sur skewness + kurtosis |
+| **HC1** | Heteroskedasticity-Consistent standard errors (White 1980) |
+| **MA(1)** | Moving Average d'ordre 1 : epsilon_t = innovation_t + theta × innovation_{t-1} |
+| **MLE** | Maximum Likelihood Estimation — estimation par vraisemblance |
+| **OPG** | Outer Product of Gradients — methode pour calculer les erreurs standards du MLE |
+| **VAR** | Vector AutoRegression — chaque variable est regressee sur les lags de toutes les variables |
+| **IRF** | Impulse Response Function — reponse d'une variable a un choc sur une autre |
+| **FEVD** | Forecast Error Variance Decomposition — part de l'incertitude expliquee par chaque choc |
+| **Cholesky** | Decomposition matricielle Sigma = P × P' pour orthogonaliser les chocs du VAR |
+| **Granger causality** | X "Granger-cause" Y si les lags de X aident a predire Y |
+| **Geweke (1982)** | Decomposition de la dependance en directionnelle + instantanee + totale |
+| **RMSE** | Root Mean Squared Error — metrique de prevision, penalise les grosses erreurs |
+| **MAE** | Mean Absolute Error — metrique de prevision, plus robuste aux outliers |
+| **In-sample** | Evaluation sur les memes donnees qui ont servi a estimer le modele |
+| **Out-of-sample** | Evaluation sur des donnees que le modele n'a jamais vues |
